@@ -53,18 +53,15 @@ export default class MockFileSource implements FileSource {
         if(typeof content === 'undefined') {
             content = null;
         }
-
         return content;
     }
     
-    async putFile(path: string, content: string, encrypt: boolean): Promise<string> {
+    async putFile(path: string, content: string, encrypt: boolean): Promise<void> {
         this.putFileCalls++;
 
         await this.delay(WRITE_DELAY);
 
         this.files[path] = content;
-
-        return this.getPublicUrl(path);
     }
     
     async deleteFile(path: string): Promise<void> {
@@ -97,7 +94,6 @@ export default class MockFileSource implements FileSource {
                 files = temp;
             }
         }
-
         return files;
     }
 
@@ -106,8 +102,13 @@ export default class MockFileSource implements FileSource {
 
         await this.delay(READ_DELAY);
 
-        if(!this.files[path]) return null;
+        if(!this.files[path]) {
+            return null;
+        }
+        try {
+            return this.getPublicUrl(path);
+        }catch(err) {console.log(err)}
 
-        return this.getPublicUrl(path);
+        return null;
     }
 }

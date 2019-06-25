@@ -45,5 +45,24 @@ test("Test the cached file source", async () => {
     expect(mSource2.putFileCalls).toBe(4);
     expect(mSource2.deleteFileCalls).toBe(2);
     expect(mSource2.listFilesCalls).toBe(1);
+
+    // Perform cached + flush version.
+    const mSource3 = new MockFileSource();
+    const cachedFileSource = new CachedFileSource(mSource3, { autoFlushing: false });
+    await performOps(cachedFileSource);
+
+    // Before flushing
+    expect(mSource3.getFileCalls).toBe(1);
+    expect(mSource3.putFileCalls).toBe(0);
+    expect(mSource3.deleteFileCalls).toBe(0);
+    expect(mSource3.listFilesCalls).toBe(1);
+
+    await cachedFileSource.flush();
+
+    // After flushing
+    expect(mSource3.getFileCalls).toBe(1);
+    expect(mSource3.putFileCalls).toBe(1);
+    expect(mSource3.deleteFileCalls).toBe(1);
+    expect(mSource3.listFilesCalls).toBe(1);
 });
     

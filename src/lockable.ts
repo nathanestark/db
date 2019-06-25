@@ -17,13 +17,17 @@ export default class Lockable {
     private readLocks: Array<LockType> = [];
     //private pendingUpgrade: null | () => void = null; 
 
-    createAndAcquire(level: LockLevel) : LockType {
-        // Create a new lock to acquire.
-        const lock: LockType = {
+    static createLock(level: LockLevel) : LockType {
+        return {
             level: level,
             id: uuid(),
             created: Date.now(),
         };
+    }
+
+    createAndAcquire(level: LockLevel) : LockType {
+        // Create a new lock to acquire.
+        const lock: LockType = Lockable.createLock(level);
         
         // Acquire it.
         if(!this._acquire(lock)) {
@@ -34,10 +38,17 @@ export default class Lockable {
         return lock;
     }
 
-    acquire(lock: LockType) : void {
-        if(!this._acquire(lock)) {
+    upgrade(lock: LockType) : LockType {
+        // If we're already a writelock, Just return the writelock.
+        if(this.writeLock && this.writeLock.id == lock.id) return this.writeLock;
+
+        // Create a copy of their submitted lock using the new lock level.
+        const newLock = Object.assign({}, lock, { level: LockLevel.Write });
+        if(!this._acquire(newLock)) {
             throw new Error("Failed to acquire lock.");
         }
+
+        return newLock;
     }
 
     private _acquire(lock: LockType) : boolean {
@@ -57,14 +68,15 @@ export default class Lockable {
         else {
             // If it is a readlock, we need to be in the list.
             if(lock.level == LockLevel.Read) {
-                // If we're not already in the list...
-                if(!this.readLocks.find(l => l.id == lock.id)) {
+                // If we're not already a writelock, and we're not already in the list...
+                if((this.writeLock && this.writeLock.id == lock.id) 
+                    || !this.readLocks.find(l => l.id == lock.id)) {
                     // Add us.
                     this.readLocks.push(lock);
                 }
             }
-            // If it is a writelock, we shouldn't be in read, and we should be
-            // the write.
+            // If it is a writelock, consider it an upgrade.
+            // We shouldn't be in read, and we should be the write.
             else {
                 // If it is a upgrade, remove us from reads.
                 if(this.readLocks.length == 1 && this.readLocks[0].id == lock.id) {
@@ -90,5 +102,9 @@ export default class Lockable {
             const index = this.readLocks.findIndex(l => l.id == lock.id);
             if(index > -1) this.readLocks.splice(index, 1);
         }
+    }
+
+    get isLocked(){
+        return this.writeLock || this.readLocks.length > 0;
     }
 }
