@@ -2,13 +2,33 @@ import FileSource from './file-source';
 import Lockable, { LockType, LockLevel } from '../lockable';
 import CachedFileSource from './cached-file-source';
 
-export class Transaction implements FileSource {
+export interface ITransaction extends FileSource {
+
+    getFileLock: (path: string) => LockType
+    addFileLock: (path: string, lock: LockType) => void
+    replaceFileLock: (path: string, lock: LockType) => void
+    getListLock: (level: LockLevel) => null | LockType
+    setListLock: (lock: LockType) => void
+
+    commit: () => Promise<void>
+    abort: () => Promise<void>
+} 
+
+class Transaction implements ITransaction {
         
     private fileSource: TransactionFileSource;
     private isExpired: boolean;
+    private doCommit: (locks: Array<{ path?: string, type: LockType}>) => Promise<void>;
+    private doAbort: (locks: Array<{ path?: string, type: LockType}>) => Promise<void>;
 
-    constructor(fileSource: TransactionFileSource) {
+    constructor(
+        fileSource: TransactionFileSource, 
+        doCommit: (locks: Array<{ path?: string, type: LockType}>) => Promise<void>, 
+        doAbort: (locks: Array<{ path?: string, type: LockType}>) => Promise<void> 
+    ) {
         this.fileSource = fileSource;
+        this.doCommit = doCommit;
+        this.doAbort = doAbort;
         this.isExpired = false;
     }
 
@@ -71,7 +91,7 @@ export class Transaction implements FileSource {
         if(lock.level == LockLevel.Write) this.listLock.write = lock;
     }
 
-    end() : Array<{ path?: string, type: LockType}> {
+    private end() : Array<{ path?: string, type: LockType}> {
         this.isExpired = true;
         let locks : Array<{ path?: string, type: LockType}>
             = Object.keys(this.locks).map(lock => {
@@ -85,6 +105,14 @@ export class Transaction implements FileSource {
         if(this.listLock.write) locks.push({ type: this.listLock.write });
 
         return locks;
+    }
+
+    async commit() {
+        await this.doCommit(this.end());
+    }
+
+    async abort() {
+        await this.doAbort(this.end());
     }
 }
 
@@ -108,7 +136,7 @@ export default class TransactionFileSource implements FileSource {
         let contents : null | string = null;
         // If called directly, they should create and commit their own
         // single purpose transaction.
-        await this.transact(async (transaction: Transaction) => {
+        await this.transact(async (transaction: ITransaction) => {
             contents = await transaction.getFile(path, decrypt);
         });
 
@@ -118,7 +146,7 @@ export default class TransactionFileSource implements FileSource {
     async putFile(path: string, content: string, encrypt: boolean): Promise<void> {
         // If called directly, they should create and commit their own
         // single purpose transaction.
-        await this.transact(async (transaction: Transaction) => {
+        await this.transact(async (transaction: ITransaction) => {
             await this.fileSource.putFile(path, content, encrypt);
         });
     }
@@ -126,7 +154,7 @@ export default class TransactionFileSource implements FileSource {
     async deleteFile(path: string) : Promise<void> {
         // If called directly, they should create and commit their own
         // single purpose transaction.
-        await this.transact(async (transaction: Transaction) => {
+        await this.transact(async (transaction: ITransaction) => {
             await this.fileSource.deleteFile(path);
         });
     }
@@ -135,7 +163,7 @@ export default class TransactionFileSource implements FileSource {
         let files: Array<string> = [];
         // If called directly, they should create and commit their own
         // single purpose transaction.
-        await this.transact(async (transaction: Transaction) => {
+        await this.transact(async (transaction: ITransaction) => {
             files = await this.fileSource.listFiles(options);
         });
 
@@ -146,7 +174,7 @@ export default class TransactionFileSource implements FileSource {
         let url: null | string = null;
         // If called directly, they should create and commit their own
         // single purpose transaction.
-        await this.transact(async (transaction: Transaction) => {
+        await this.transact(async (transaction: ITransaction) => {
             url = await this.fileSource.getFileUrl(path);
         });
 
@@ -331,11 +359,11 @@ export default class TransactionFileSource implements FileSource {
 
     /* Transaction utility calls */
 
-    async createTransaction() : Promise<Transaction> {
-        return new Transaction(this);
+    async createTransaction() : Promise<ITransaction> {
+        return new Transaction(this, this.commit.bind(this), this.abort.bind(this));
     }
 
-    async transact(criticalBlock: (transaction: Transaction) => Promise<void>) {
+    async transact(criticalBlock: (transaction: ITransaction) => Promise<void>) {
         // Retry logic based on type of error? If error is due to failure
         // to obtain locks, we should retry.
 
@@ -343,16 +371,15 @@ export default class TransactionFileSource implements FileSource {
         try {
             await criticalBlock(transaction);
 
-            await this.commit(transaction);
+            await transaction.commit();
         }
         catch(e) {
-            await this.abort(transaction);
+            await transaction.abort();
             throw e; // Rethrow after aborting.
         }
     }
 
-    async commit(transaction: Transaction) {
-        const locks = transaction.end();
+    private async commit(locks: Array<{ path?: string, type: LockType}>) {
         // Go through and submit any modified cache files associated 
         // with this transaction.
         await Promise.all(
@@ -377,8 +404,7 @@ export default class TransactionFileSource implements FileSource {
         }));
     }
 
-    async abort(transaction: Transaction) {
-        const locks = transaction.end();
+    private async abort(locks: Array<{ path?: string, type: LockType}>) {
         // Go through and clear any modified cache files associated 
         // with this transaction.
         await Promise.all(
