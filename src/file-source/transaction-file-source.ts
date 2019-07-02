@@ -1,6 +1,6 @@
 import FileSource from './file-source';
 import Lockable, { LockType, LockLevel } from '../lockable';
-import CachedFileSource from './cached-file-source';
+import { ICachedFileSource } from './cached-file-source';
 
 export interface ITransaction extends FileSource {
 
@@ -118,16 +118,18 @@ class Transaction implements ITransaction {
 
 export default class TransactionFileSource implements FileSource {
 
-    private fileSource: CachedFileSource;
+    private fileSource: ICachedFileSource;
 
     private lockables: {
         [filePath: string]: Lockable
     } = {};
     private listLocks: Array<LockType> = [];
 
-    constructor(fileSource: FileSource) {
+    constructor(fileSource: ICachedFileSource) {
 
-        this.fileSource = new CachedFileSource(fileSource, { autoFlushing: false });
+        if(fileSource.cacheOptions.autoFlushing) throw new Error("Transactions require 'autoFlushing' to be disabled for the underlying ICacheFileSource");
+
+        this.fileSource = fileSource;
     }
 
     /* Basic FileSource calls */

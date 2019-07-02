@@ -6,7 +6,25 @@ enum Modification {
     Deleted
 }
 
-export default class CachedFileSource implements FileSource {
+export interface Options {
+    cacheFileUrls?: boolean,
+    autoFlushing?: boolean
+}
+
+export interface ICachedFileSource extends FileSource {
+    readonly cacheOptions: Options
+    getFile(path: string, decrypt: boolean): Promise<string | null>
+    putFile(path: string, content: string, encrypt: boolean): Promise<void>
+    deleteFile(path: string) : Promise<void>
+    listFiles(options?: { pathFilter?: string, callback?: (name: string) => boolean }): Promise<Array<string>>
+    getFileUrl(path: string): Promise<string | null>
+
+    flush(path?: string) : Promise<void>
+    abortChanges(path?: string) : Promise<void>
+    clear(path?: string) : void
+}
+
+export default class CachedFileSource implements ICachedFileSource {
     private fileSource : FileSource;
     private originalCache: MemFileSource;
     private cache: MemFileSource;
@@ -26,21 +44,16 @@ export default class CachedFileSource implements FileSource {
         [fileName: string]: boolean
     }
 
-    private opts: {
-        cacheFileUrls: boolean,
-        autoFlushing: boolean
-    };
+    private options: Options;
+    get cacheOptions() { return this.options; }
 
     constructor(
         fileSource : FileSource, 
-        options?: {
-            cacheFileUrls?: boolean,
-            autoFlushing?: boolean
-        }
+        options?: Options
     ) {
         this.fileSource = fileSource;
 
-        this.opts = Object.assign({}, { 
+        this.options = Object.assign({}, { 
             cacheFileUrls: true, 
             autoFlushing: true
         }, options ? options : {});
@@ -54,15 +67,15 @@ export default class CachedFileSource implements FileSource {
         this.originalEncryptState = {};
     }
 
-    isDeleted(path: string) {
+    private isDeleted(path: string) {
         const mod = this.modifications[path];
         return mod && mod.type == Modification.Deleted;
     }
 
-    getLastEncryptState(path: string) {
+    private getLastEncryptState(path: string) {
         return !!this.lastEncryptState[path];
     }
-    getOriginalEncryptState(path: string) {
+    private getOriginalEncryptState(path: string) {
         return !!this.originalEncryptState[path];
     }
 
@@ -109,7 +122,7 @@ export default class CachedFileSource implements FileSource {
         delete this.negativeCache[path];
 
         // Then into source.
-        if(this.opts.autoFlushing) await this.flush(path);
+        if(this.options.autoFlushing) await this.flush(path);
     }
 
     async deleteFile(path: string) : Promise<void> {
@@ -136,7 +149,7 @@ export default class CachedFileSource implements FileSource {
         this.negativeCache[path] = true;
         
         // Then from file source
-        if(this.opts.autoFlushing) await this.flush(path);
+        if(this.options.autoFlushing) await this.flush(path);
     }
 
     async listFiles(options?: { pathFilter?: string, callback?: (name: string) => boolean }): Promise<Array<string>> {
@@ -164,7 +177,7 @@ export default class CachedFileSource implements FileSource {
     
     async getFileUrl(path: string): Promise<string | null> {
         // Should we do caching of URLs?
-        if(this.opts.cacheFileUrls) {
+        if(this.options.cacheFileUrls) {
             const rawUrl = await this.fileSource.getFileUrl(path);
             return rawUrl;
         }

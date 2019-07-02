@@ -1,5 +1,6 @@
 import FileSource from '../../src/file-source/file-source';
 import TransactionFileSource, { ITransaction } from '../../src/file-source/transaction-file-source';
+import CachedFileSource from '../../src/file-source/cached-file-source';
 import MockFileSource from '../mock-file-source';
 
 
@@ -39,7 +40,7 @@ test("Test the transaction file source", async () => {
 
     // Perform transaction version.
     const mSource2 = new MockFileSource();
-    const tSource = new TransactionFileSource(mSource2);
+    const tSource = new TransactionFileSource(new CachedFileSource(mSource2, { autoFlushing: false }));
     await tSource.transact(async (transaction) => {
         await performOps(transaction);
     });
@@ -51,7 +52,7 @@ test("Test the transaction file source", async () => {
 
     // Ensure transactions restrict access
     const mSource3 = new MockFileSource();
-    const tSource2 = new TransactionFileSource(mSource3);
+    const tSource2 = new TransactionFileSource(new CachedFileSource(mSource2, { autoFlushing: false }));
 
     const performDualTransaction = async (fn: (trans1: ITransaction, trans2: ITransaction) => Promise<void>): Promise<boolean> => {
         const trans1 = await tSource2.createTransaction();
@@ -216,7 +217,7 @@ test("Test the transaction file source", async () => {
     // Ensure transactions perform rollback on abort,
     // and apply on commit
     const mSource4 = new MockFileSource();
-    const tSource3 = new TransactionFileSource(mSource4);
+    const tSource3 = new TransactionFileSource(new CachedFileSource(mSource4, { autoFlushing: false }));
 
     await tSource3.transact(async (trans) => {
         await trans.putFile('file1', "content1", false);
