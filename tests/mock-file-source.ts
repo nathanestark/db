@@ -60,7 +60,7 @@ export default class MockFileSource implements FileSource {
         this.putFileCalls++;
 
         await this.delay(WRITE_DELAY);
-
+        console.log("PUT", path);
         this.files[path] = content;
     }
     
