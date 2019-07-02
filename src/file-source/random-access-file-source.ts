@@ -234,7 +234,7 @@ export default class RandomAccessFileSource implements ICachedFileSource {
                 .filter(i => i.path == raFile.path && i.position > index.position)
                 // Adjust their content positions.
                 .forEach(i => {
-                    i.position -= index.position;
+                    i.position -= index.length;
                 });
 
             // Will current contents fit in this file?
@@ -291,7 +291,7 @@ export default class RandomAccessFileSource implements ICachedFileSource {
                 .filter(i => i.path == raFile.path && i.position > index.position)
                 // Adjust their content positions.
                 .forEach(i => {
-                    i.position -= index.position;
+                    i.position -= index.length;
                 });
 
             // Save master after we've made our changes.

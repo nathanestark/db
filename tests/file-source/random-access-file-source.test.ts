@@ -65,5 +65,29 @@ test("Test the cached file source", async () => {
     expect(mSource3.putFileCalls).toBe(2); // 1 saves: 1 for the master, 1 for the only file we're saving.
     expect(mSource3.deleteFileCalls).toBe(0);
     expect(mSource3.listFilesCalls).toBe(0);
+
+    // Make sure values are correct.
+    const mSource4 = new MockFileSource();
+    const cachedFileSource2 = new RandomAccessFileSource(new CachedFileSource(mSource4, { autoFlushing: false }));
+    await cachedFileSource2.putFile("file1", "The quick brown fox", false);
+    let content = await cachedFileSource2.getFile("file1", false);
+    expect(content).toBe("The quick brown fox");
+    await cachedFileSource2.putFile("file2", "Brown bear, brown bear.", false);
+    content = await cachedFileSource2.getFile("file2", false);
+    expect(content).toBe("Brown bear, brown bear.");
+    content = await cachedFileSource2.getFile("file1", false);
+    expect(content).toBe("The quick brown fox");
+
+    await cachedFileSource2.putFile("file1", "Cow jumps over the moon", false);
+    content = await cachedFileSource2.getFile("file2", false);
+    expect(content).toBe("Brown bear, brown bear.");
+    content = await cachedFileSource2.getFile("file1", false);
+    expect(content).toBe("Cow jumps over the moon");
+
+    await cachedFileSource2.deleteFile("file2");
+    content = await cachedFileSource2.getFile("file2", false);
+    expect(content).toBe(null);
+    content = await cachedFileSource2.getFile("file1", false);
+    expect(content).toBe("Cow jumps over the moon");
 });
     
