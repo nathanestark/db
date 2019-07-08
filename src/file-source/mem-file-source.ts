@@ -73,7 +73,7 @@ export default class MemFileSource implements FileSource {
         return this.fileUrls[path] || null;
     }
 
-    clear(path?: string) {
+    async clear(path?: string) : Promise<void> {
         if(path) {
             delete this.files[path];
             delete this.fileUrls[path];

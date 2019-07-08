@@ -21,7 +21,7 @@ export interface ICachedFileSource extends FileSource {
 
     flush(path?: string) : Promise<void>
     abortChanges(path?: string) : Promise<void>
-    clear(path?: string) : void
+    clear(path?: string) : Promise<void>
 }
 
 export default class CachedFileSource implements ICachedFileSource {
@@ -266,9 +266,9 @@ export default class CachedFileSource implements ICachedFileSource {
         }
     }
 
-    clear(path?: string) {
-        this.cache.clear(path);
-        this.originalCache.clear(path);
+    async clear(path?: string) {
+        await this.cache.clear(path);
+        await this.originalCache.clear(path);
         if(path) {
             delete this.modifications[path];
             delete this.negativeCache[path];

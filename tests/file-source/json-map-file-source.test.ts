@@ -1,10 +1,10 @@
 import FileSource from '../../src/file-source/file-source';
-import RandomAccessFileSource from '../../src/file-source/random-access-file-source';
+import JSONMapFileSource from '../../src/file-source/json-map-file-source';
 import CachedFileSource from '../../src/file-source/cached-file-source';
 import MockFileSource from '../mock-file-source';
 
 
-test("Test the random access file source", async () => {
+test("Test the json map file source", async () => {
     // Perform some actions
     const performOps = async (s: FileSource) => { 
         await s.getFile("file1", false);
@@ -40,16 +40,16 @@ test("Test the random access file source", async () => {
 
     // Perform RA version.
     const mSource2 = new MockFileSource();
-    await performOps(new RandomAccessFileSource(new CachedFileSource(mSource2)));
+    await performOps(new JSONMapFileSource(new CachedFileSource(mSource2)));
 
     expect(mSource2.getFileCalls).toBe(1);
     expect(mSource2.putFileCalls).toBe(10); // More than default, because each change requires writing to master and to the file we save on.
-    expect(mSource2.deleteFileCalls).toBe(0); // We never delete old empty files; we leave them there to be filled in again. 
+    expect(mSource2.deleteFileCalls).toBe(0);  
     expect(mSource2.listFilesCalls).toBe(0); // List calls all read from the in-memory list read from the 'master' file.
 
     // Perform RA + flush version.
     const mSource3 = new MockFileSource();
-    const cachedFileSource = new RandomAccessFileSource(new CachedFileSource(mSource3, { autoFlushing: false }));
+    const cachedFileSource = new JSONMapFileSource(new CachedFileSource(mSource3, { autoFlushing: false }));
     await performOps(cachedFileSource);
 
     // Before flushing
@@ -68,7 +68,7 @@ test("Test the random access file source", async () => {
 
     // Make sure values are correct.
     const mSource4 = new MockFileSource();
-    const cachedFileSource2 = new RandomAccessFileSource(new CachedFileSource(mSource4, { autoFlushing: false }));
+    const cachedFileSource2 = new JSONMapFileSource(new CachedFileSource(mSource4, { autoFlushing: false }));
     await cachedFileSource2.putFile("file1", "The quick brown fox", false);
     let content = await cachedFileSource2.getFile("file1", false);
     expect(content).toBe("The quick brown fox");
@@ -89,5 +89,29 @@ test("Test the random access file source", async () => {
     expect(content).toBe(null);
     content = await cachedFileSource2.getFile("file1", false);
     expect(content).toBe("Cow jumps over the moon");
+
+    // Check that we can get a URL to the master file..
+    const mSource5 = new MockFileSource();
+    const cachedFileSource3 = new JSONMapFileSource(new CachedFileSource(mSource5, { autoFlushing: false }));
+    
+    const data1 = { name: "firstName", type: "text", data: "Nathan", publicKey: "whatever" };
+    const data2 = { name: "lastName", type: "text", data: "Stark", publicKey: "whatever" };
+    await cachedFileSource3.putFile("firstName", JSON.stringify(data1), false);
+    await cachedFileSource3.putFile("lastName", JSON.stringify(data2), false);
+
+    // Need to flush first!    
+    try {
+        await cachedFileSource3.getFileMapUrl("firstName");
+        expect(1).toBe(0);
+    } catch(e) {
+        expect(1).toBe(1);
+    }
+
+    await cachedFileSource3.flush();
+    const url1 = await cachedFileSource3.getFileMapUrl("firstName");
+    const url2 = await cachedFileSource3.getFileMapUrl("firstName");
+    expect(url1).toMatch(/https:\/\/mock\.filesource\.nil\/files\/.*/);
+    expect(url1).toBe(url2);
+    
 });
     

@@ -3,47 +3,43 @@ import { ICachedFileSource } from './cached-file-source';
 import nodePath from 'path';
 import { v4 as uuid } from 'uuid';
 
-const MAX_FILE_SIZE = 1000000; // # of characters, or 'bytes' (sort of)
-const MASTER_FILE_NAME = 'ra-master.json';
+const MAX_ITEMS = 100; // # of JSON objects
+const MASTER_FILE_NAME = 'jm-master.json';
 
 
 interface StoredFileIndex {
     parentPath: string,
     path: string,
-    position: number,
-    length: number,
     encrypted: boolean,
 }
 
 interface FileIndex {
-    path: string,
-    position: number,
-    length: number,
+    path: string
     encrypted: boolean
 }
 
 interface FileIndexes { 
     [filePath: string]: FileIndex
 }
-interface RandomAccessFile {
+interface JSONMapFile {
     path: string, 
-    size: number, 
+    count: number, 
     encrypted: boolean
 }
 
 interface Options {
-    maxSize?: number,
+    maxItems?: number,
     root?: string
 }
 
 // A ICachedFileSource, which uses an internal CachedFileSource to
 // deal with the actual caching aspect. 
-export default class RandomAccessFileSource implements ICachedFileSource {
+export default class JSONMapFileSource implements ICachedFileSource {
 
     private fileSource : ICachedFileSource;
     private _fileIndexes: null | FileIndexes = null;
-    private _randomAccessFileList: null | Array<RandomAccessFile> = null;
-    private _randomAccessFileMap: null | {[path: string]: RandomAccessFile} = null;
+    private _jsonMapFileList: null | Array<JSONMapFile> = null;
+    private _jsonMapFileMap: null | {[path: string]: JSONMapFile} = null;
 
     private options: Options;
 
@@ -51,7 +47,7 @@ export default class RandomAccessFileSource implements ICachedFileSource {
         this.fileSource = fileSource;
         
         this.options = Object.assign({}, { 
-            maxSize: MAX_FILE_SIZE,
+            maxItems: MAX_ITEMS,
             root: "",
         }, options ? options : {});
     }
@@ -65,14 +61,14 @@ export default class RandomAccessFileSource implements ICachedFileSource {
         if(!this._fileIndexes) throw new Error("Must call 'load' to load in file indexes");
         return this._fileIndexes!;
     }
-    private get randomAccessFileList() : Array<RandomAccessFile> {
-        if(!this._randomAccessFileList) throw new Error("Must call 'load' to load in random access files");
-        return this._randomAccessFileList!;
+    private get jsonMapFileList() : Array<JSONMapFile> {
+        if(!this._jsonMapFileList) throw new Error("Must call 'load' to load in JSON map files");
+        return this._jsonMapFileList!;
     }
 
-    private get randomAccessFileMap() : { [path:string]: RandomAccessFile } {
-        if(!this._randomAccessFileMap) throw new Error("Must call 'load' to load in random access files");
-        return this._randomAccessFileMap!;
+    private get jsonMapFileMap() : { [path:string]: JSONMapFile } {
+        if(!this._jsonMapFileMap) throw new Error("Must call 'load' to load in JSON map files");
+        return this._jsonMapFileMap!;
     }
 
     private async resolveFileIndex(path: string) : Promise<FileIndex | null> {
@@ -87,55 +83,56 @@ export default class RandomAccessFileSource implements ICachedFileSource {
         return null;
     }
 
-    private async putFileImpl(path: string, content: string, encrypt: boolean) {
+    private async putJSONImpl(path: string, content: any, encrypt: boolean) {
 
         let fsContent = "";        
         // Grab a new index
-        // Find a randomAccessFile that we can fit into.
-        let _raFile = this.randomAccessFileList.find(raFile => raFile.encrypted == encrypt && (raFile.size + content.length) <= this.options.maxSize!);
-        if(!_raFile) {
-            // Create a new randomAccessFile.
-            _raFile = {
+        // Find a jsonMapFile that we can fit into.
+        let _jmFile = this.jsonMapFileList.find(jmFile => jmFile.encrypted == encrypt && jmFile.count < this.options.maxItems!);
+        if(!_jmFile) {
+            // Create a new jsonMapFile.
+            _jmFile = {
                 path: this.fullPath(uuid()),
-                size: 0,
+                count: 0,
                 encrypted: encrypt
             };
             // Add it in
-            this.randomAccessFileList.push(_raFile);
-            this.randomAccessFileMap[_raFile.path] = _raFile;
-            fsContent = "";
+            this.jsonMapFileList.push(_jmFile);
+            this.jsonMapFileMap[_jmFile.path] = _jmFile;
+            fsContent = "{}";
         } else {
             // Grab existing contents
-            const _fsContent = await this.fileSource.getFile(_raFile.path, _raFile.encrypted);
-            fsContent = !_fsContent ? "" : _fsContent;
+            const _fsContent = await this.fileSource.getFile(_jmFile.path, _jmFile.encrypted);
+            fsContent = !_fsContent ? "{}" : _fsContent;
         }
+        let jsContent: { [path: string]: any } = {};
+        // If parsing errors exist, just clear it out.
+        try { jsContent = JSON.parse(fsContent); } catch(err) { jsContent = {}; }
+
         // Now add the content into whatever file we've decided on.
-        await this.addContents(_raFile, fsContent, path, content);
+        await this.addContents(_jmFile, jsContent, path, content);
     }
 
-    private async addContents(raFile: RandomAccessFile, fileContent: string, 
+    private async addContents(jmFile: JSONMapFile, fileContent: { [path:string]: any }, 
                               path: string, newContent: string) {
 
-        const newPos = fileContent.length;
         // Update contents in file.
-        const fsContent = fileContent + newContent;
-        await this.fileSource.putFile(raFile.path, fsContent, raFile.encrypted);
+        fileContent[path] = newContent;
+        await this.fileSource.putFile(jmFile.path, JSON.stringify(fileContent), jmFile.encrypted);
         // Update file index
         this.fileIndexes[path] = {
-            path: raFile.path,
-            position: newPos,
-            length: newContent.length,
-            encrypted: raFile.encrypted
+            path: jmFile.path,
+            encrypted: jmFile.encrypted
         };
-        raFile.size = fsContent.length;
+        jmFile.count = Object.keys(fileContent).length;
     }
 
     // Explicit load call if we need to control when the index gets loaded.
     async load() : Promise<void> {
         // Preset props.
         this._fileIndexes = {};
-        this._randomAccessFileList = [];
-        this._randomAccessFileMap = {};
+        this._jsonMapFileList = [];
+        this._jsonMapFileMap = {};
 
         // Load the master index
         let masterIndex = await this.fileSource.getFile(this.fullPath(MASTER_FILE_NAME), true);
@@ -148,27 +145,25 @@ export default class RandomAccessFileSource implements ICachedFileSource {
                     // Save the mapped file index
                     this.fileIndexes[index.path] = {
                         path: index.parentPath,
-                        position: index.position,
-                        length: index.length,
                         encrypted: index.encrypted
                     };
-                    // Create or update the Random File Access
-                    let raFile : RandomAccessFile = this._randomAccessFileMap[index.parentPath];
-                    if(!raFile) {
-                        raFile = {
+                    // Create or update the JSON Map
+                    let jmFile : JSONMapFile = this._jsonMapFileMap[index.parentPath];
+                    if(!jmFile) {
+                        jmFile = {
                             path: index.parentPath,
                             encrypted: index.encrypted,
-                            size: index.length
+                            count: 1
                         };
-                        this._randomAccessFileMap[index.parentPath] = raFile;
-                        this._randomAccessFileList.push(raFile);
+                        this._jsonMapFileMap[index.parentPath] = jmFile;
+                        this._jsonMapFileList.push(jmFile);
                     } else {
-                        // We know about this file, so just update it's size.
-                        raFile.size += index.length;
+                        // We know about this file, so just update its count.
+                        jmFile.count++;
                     }
                 }
             } catch(err) {
-                throw new Error("Failed to read random access master file: " + err);
+                throw new Error("Failed to read JSON map master file: " + err);
             }
         }
     }
@@ -201,61 +196,40 @@ export default class RandomAccessFileSource implements ICachedFileSource {
             let contents = await this.fileSource.getFile(index.path, index.encrypted);
             // File needs to exist.
             if(contents) {
-                contents = contents.substr(index.position, index.length);
+                let jContents = null;
+                // Return null if it doesn't parse.
+                try { jContents = JSON.parse(contents); } catch(err) { return null; }
+
+                jContents = jContents[path];
                 // File contents need to exist.
-                if(contents) {
-                    return contents;
+                if(typeof jContents !== 'undefined' ) {
+                    return jContents;
                 }
             }
         }
-
         return null;
     }
-        
+    
     async putFile(path: string, content: string, encrypt: boolean): Promise<void> {
         // Resolve our real file
         const index = await this.resolveFileIndex(path);
         if(index) {
-            // Grab the ra file
-            const raFile = this.randomAccessFileMap[index.path];
+            // Grab the jm file
+            const jmFile = this.jsonMapFileMap[index.path];
 
             // We'll need the existing contents
-            let fsContent = await this.fileSource.getFile(raFile.path, raFile.encrypted);
-            fsContent = !fsContent ? "" : fsContent!;
-            // Remove old content block
-            fsContent = fsContent.slice(0, index.position) + fsContent.slice(index.position + index.length);
-            
-            // Go through all indexes
-            Object.keys(this.fileIndexes)
-                // Pull out those indexes
-                .map(path => this.fileIndexes[path])
-                // Find those that are saved in the same file, and have a position
-                // that would be affected by this change
-                .filter(i => i.path == raFile.path && i.position > index.position)
-                // Adjust their content positions.
-                .forEach(i => {
-                    i.position -= index.length;
-                });
-
-            // Will current contents fit in this file?
-            const newLength = fsContent.length + content.length;
-            if(newLength > this.options.maxSize!) {
-                // They won't fit.
-
-                // Save old one as is (with the content still excised)
-                await this.fileSource.putFile(raFile.path, fsContent, raFile.encrypted);
-                // Update old raFile's recorded size.
-                raFile.size = fsContent.length;
-
-                // Find somewhere else for the content, and put it there.
-                await this.putFileImpl(path, content, encrypt);
-            } else {
-                // It fits, so add it into this file.
-                await this.addContents(raFile, fsContent, path, content);
+            let fsContent = await this.fileSource.getFile(jmFile.path, jmFile.encrypted);
+            let jContents: { [path: string]: any } = {};
+            // Default to empty object if we can't parse, or it doesn't exist.
+            if(fsContent) {
+                try { jContents = JSON.parse(fsContent); } catch(err) {/* No action */ }
             }
+
+            // Replace existing with current contents.
+            await this.addContents(jmFile, jContents, path, content);
         } else {
             // No current index found, so create a new one.
-            await this.putFileImpl(path, content, encrypt);
+            await this.putJSONImpl(path, content, encrypt);
         }
         // Save master after we've made our changes.
         await this.save();
@@ -265,49 +239,40 @@ export default class RandomAccessFileSource implements ICachedFileSource {
         // Resolve our real file
         const index = await this.resolveFileIndex(path);
         if(index) {
-            // Grab the ra file
-            const raFile = this.randomAccessFileMap[index.path];
+            // Grab the jm file
+            const jmFile = this.jsonMapFileMap[index.path];
 
             // We'll need the existing contents
-            let fsContent = await this.fileSource.getFile(raFile.path, raFile.encrypted);
-            fsContent = !fsContent ? "" : fsContent!;
-            // Remove old content block
-            fsContent = fsContent.slice(0, index.position) + fsContent.slice(index.position + index.length);
+            let fsContent = await this.fileSource.getFile(jmFile.path, jmFile.encrypted);
+            let jContents: { [path: string]: any } = {};
+            // Default to empty object if we can't parse, or it doesn't exist.
+            if(fsContent) {
+                try { jContents = JSON.parse(fsContent); } catch(err) {/* No action */ }
+            }
 
-            if(fsContent.length) {
-                // If there is content left, save out.
+            // Remove old content
+            delete jContents[path];
 
-                // Save with the content excised
-                await this.fileSource.putFile(raFile.path, fsContent, raFile.encrypted);
-                // Update old raFile's recorded size.
-                raFile.size = fsContent.length;
+            const count = Object.keys(jContents).length;
+            if(count) {
+                // If there are items left, save out.
 
-                // Remove the index
-                delete this.fileIndexes[path];
-
-                // Go through all indexes
-                Object.keys(this.fileIndexes)
-                    // Pull out those indexes
-                    .map(path => this.fileIndexes[path])
-                    // Find those that are saved in the same file, and have a position
-                    // that would be affected by this change.
-                    .filter(i => i.path == raFile.path && i.position > index.position)
-                    // Adjust their content positions.
-                    .forEach(i => {
-                        i.position -= index.length;
-                    });
+                // Save with content removed.
+                await this.fileSource.putFile(jmFile.path, JSON.stringify(jContents), jmFile.encrypted);
+                // Update old jmFile's recorded size.
+                jmFile.count = count;
             } else {
                 // Otherwise delete the file.
-                await this.fileSource.deleteFile(raFile.path);
+                await this.fileSource.deleteFile(jmFile.path);
 
-                // Remove the index
-                delete this.fileIndexes[path];
-
-                // And raMaps.
-                delete this.randomAccessFileMap[raFile.path];
-                const i = this.randomAccessFileList.findIndex(f => f.path == raFile.path);
-                if(i != -1) this.randomAccessFileList.splice(i, 1);
+                // And jsonMaps.
+                delete this.jsonMapFileMap[jmFile.path];
+                const i = this.jsonMapFileList.findIndex(f => f.path == jmFile.path);
+                if(i != -1) this.jsonMapFileList.splice(i, 1);
             }
+
+            // Remove the index
+            delete this.fileIndexes[path];
 
             // Save master after we've made our changes.
             await this.save();
@@ -337,21 +302,14 @@ export default class RandomAccessFileSource implements ICachedFileSource {
     }
 
     async getFileUrl(path: string): Promise<string | null> {
-        throw new Error("Method getFileUrl is unavailable on RandomAccessFileSource. Use getFileUrlIndex.");
+        throw new Error("Method getFileUrl is unavailable on JSONMapFileSource. Use getFileIndex");
     }
 
-    // Slightly signature as above, with different meaning. Return value differs.
-    async getFileUrlIndex(path: string): Promise<{ path: string, position: number, length: number } | null> {
+    // Same signature as above, but different meaning.
+    async getFileMapUrl(path: string): Promise<string | null> {
         const index = await this.resolveFileIndex(path);
         if(index) {
-            const url = await this.fileSource.getFileUrl(index.path);
-            if(url) {
-                return {
-                    path: url,
-                    position: index.position,
-                    length: index.length
-                };
-            }
+            return await this.fileSource.getFileUrl(index.path);
         }
         return null;
     }
@@ -391,15 +349,15 @@ export default class RandomAccessFileSource implements ICachedFileSource {
                 // a re-load of the master file, and a repopulation of these
                 // indexes.
                 this._fileIndexes = null;
-                this._randomAccessFileList = null;
-                this._randomAccessFileMap = null;
+                this._jsonMapFileList = null;
+                this._jsonMapFileMap = null;
             }
         } else {
             await this.fileSource.clear();
             // Clear all indexes as well.
             this._fileIndexes = null;
-            this._randomAccessFileList = null;
-            this._randomAccessFileMap = null;
-    }
+            this._jsonMapFileList = null;
+            this._jsonMapFileMap = null;
+        }
     }
 }
