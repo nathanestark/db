@@ -301,7 +301,7 @@ export default class JSONMapFileSource implements ICachedFileSource {
     }
 
     async getFileUrl(path: string): Promise<string | null> {
-        throw new Error("Method getFileUrl is unavailable on JSONMapFileSource. Use getFileIndex");
+        throw new Error("Method getFileUrl is unavailable on JSONMapFileSource. Use getFileMapUrl");
     }
 
     // Same signature as above, but different meaning.
