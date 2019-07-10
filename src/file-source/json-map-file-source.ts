@@ -1,4 +1,3 @@
-import FileSource from './file-source';
 import { ICachedFileSource } from './cached-file-source';
 import nodePath from 'path';
 import { v4 as uuid } from 'uuid';
